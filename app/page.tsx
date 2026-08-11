@@ -1,68 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { CoverageItem, InvestigationResult, Provider } from "./investigation-types";
+import { runKimiDirect, testKimiKey } from "./kimi-direct";
 
-type Provider = "kimi" | "deepseek" | "doubao";
 type RunState = "idle" | "running" | "complete" | "error";
-
-type QueryPlan = {
-  query: string;
-  purpose: string;
-};
-
-type TaskSpec = {
-  objective: string;
-  mode: string;
-  timeRange: string;
-  platforms: string[];
-  riskHypotheses: string[];
-  inclusionCriteria: string[];
-  exclusions: string[];
-  evidenceRequirements: string[];
-  queries: QueryPlan[];
-};
-
-type CoverageItem = {
-  source: string;
-  status: "complete" | "partial" | "failed" | "not_covered";
-  count: number;
-  note: string;
-};
-
-type Clue = {
-  id: string;
-  title: string;
-  url: string;
-  source: string;
-  publishedAt?: string;
-  summary: string;
-  riskSignal: string;
-  whyItMatters: string;
-  evidenceLevel: "高" | "中" | "低" | "待核";
-  verdict: "重点核验" | "弱信号" | "排除" | "待核";
-};
-
-type InvestigationResult = {
-  runId: string;
-  mode: "live" | "demo";
-  provider: string;
-  model: string;
-  generatedAt: string;
-  task: TaskSpec;
-  coverage: CoverageItem[];
-  clues: Clue[];
-  assessment: {
-    summary: string;
-    confidence: "高" | "中" | "低";
-    evidenceGaps: string[];
-    nextActions: string[];
-  };
-  logs: Array<{ at: string; stage: string; message: string; status: string }>;
-};
 
 declare global {
   interface Window {
-    XUNCHA_RADAR_CONFIG?: { apiBaseUrl?: string };
+    XUNCHA_RADAR_CONFIG?: { directKimiApiBase?: string };
   }
 }
 
@@ -74,85 +20,8 @@ const providers: Array<{ id: Provider; name: string; detail: string; mark: strin
 
 const platformOptions = ["全网", "抖音", "小红书", "B站", "微博", "贴吧", "百家号"];
 const timeOptions = ["近24小时", "近48小时", "近7天", "近30天", "不限时间"];
-
-const demoResult: InvestigationResult = {
-  runId: "DEMO-260811-001",
-  mode: "demo",
-  provider: "演示引擎",
-  model: "任务编译器 v0.1",
-  generatedAt: "2026-08-11T06:10:00.000Z",
-  task: {
-    objective: "发现近48小时内可能形成集中讨论、事实争议或群体情绪对立的原生风险线索",
-    mode: "开放式风险发现",
-    timeRange: "近48小时",
-    platforms: ["全网公开网页", "抖音", "小红书", "B站"],
-    riskHypotheses: ["突发事件细节被夸大或虚构", "评论区出现集中质疑与情绪对立", "同一叙事被多账号重复搬运"],
-    inclusionCriteria: ["存在可核验原链接", "内容发布时间符合范围", "具备明确风险信号而非一般负面评价"],
-    exclusions: ["权威媒体的批判或辟谣内容", "与任务主题仅有关键词重合", "无法确认发布时间的历史内容"],
-    evidenceRequirements: ["原始链接", "标题与发布主体", "发布时间", "风险话术或关键画面", "交叉来源"],
-    queries: [
-      { query: "近48小时 通报 质疑 现场视频", purpose: "发现突发事件与事实争议" },
-      { query: "site:douyin.com 近期 回应 网友质疑", purpose: "定位短视频平台原生讨论" },
-      { query: "site:xiaohongshu.com 曝光 最新 争议", purpose: "寻找社区型弱信号" },
-      { query: "site:bilibili.com/video 近期 造假 实锤", purpose: "核验视频化二次传播" },
-    ],
-  },
-  coverage: [
-    { source: "公开网页索引", status: "complete", count: 18, note: "演示：已完成4组查询并去重" },
-    { source: "平台原生页面", status: "partial", count: 6, note: "演示：仅覆盖公开收录页面，未覆盖登录后内容" },
-    { source: "评论区", status: "not_covered", count: 0, note: "演示：第一版尚未接入平台评论采集" },
-  ],
-  clues: [
-    {
-      id: "CLUE-001",
-      title: "演示样本：某事件视频以“内部消息”补充未经证实细节",
-      url: "",
-      source: "短视频平台",
-      publishedAt: "近2小时",
-      summary: "标题和口播均使用确定性语气，但页面没有给出消息来源，评论区出现对真实性的集中追问。",
-      riskSignal: "无来源爆料 · 确定性表述 · 评论质疑",
-      whyItMatters: "满足“突发事件细节可能被虚构”的初筛假设，需要回到原视频核对画面、账号历史和权威通报。",
-      evidenceLevel: "待核",
-      verdict: "重点核验",
-    },
-    {
-      id: "CLUE-002",
-      title: "演示样本：多个账号复用同一截图并使用相近标题",
-      url: "",
-      source: "公开网页索引",
-      publishedAt: "近9小时",
-      summary: "3个页面出现相同裁剪截图与高度相似话术，尚不能确认是否属于同一传播主体。",
-      riskSignal: "同图复用 · 话术趋同 · 跨账号传播",
-      whyItMatters: "可能构成传播矩阵弱信号，但需要账号、联系方式或发布时间序列继续补证。",
-      evidenceLevel: "低",
-      verdict: "弱信号",
-    },
-    {
-      id: "CLUE-003",
-      title: "演示排除：媒体对网传说法进行事实核查",
-      url: "",
-      source: "新闻网站",
-      publishedAt: "近1天",
-      summary: "正文明确引用权威回应并否定网传说法，属于批判与辟谣语境。",
-      riskSignal: "命中关键词但语境相反",
-      whyItMatters: "不作为原生风险样本，保留为反向证据。",
-      evidenceLevel: "高",
-      verdict: "排除",
-    },
-  ],
-  assessment: {
-    summary: "本次演示发现1条重点核验线索和1条传播矩阵弱信号。当前证据只能支持继续调查，不能直接认定违规。",
-    confidence: "低",
-    evidenceGaps: ["缺少平台原始页面截图", "未核验具体发布时间", "评论区尚未覆盖", "账号关联证据不足"],
-    nextActions: ["打开原始页面核对标题、画面与发布时间", "检索截图中的稀有文字锚点", "反查首发账号及相同素材", "与权威通报进行时间线比对"],
-  },
-  logs: [
-    { at: "14:08:11", stage: "任务编译", message: "识别为开放式风险发现任务", status: "complete" },
-    { at: "14:08:12", stage: "查询规划", message: "生成4组具有不同调查目的的查询", status: "complete" },
-    { at: "14:08:15", stage: "公开检索", message: "演示数据：18条结果进入去重与语境排除", status: "complete" },
-    { at: "14:08:18", stage: "证据研判", message: "保留2条线索，排除1条反向语境内容", status: "complete" },
-  ],
-};
+const API_KEY_STORAGE = "xuncha-radar:kimi-api-key";
+const DEFAULT_KIMI_API_BASE = "https://api.moonshot.cn/v1";
 
 function statusText(status: CoverageItem["status"]) {
   return {
@@ -177,23 +46,6 @@ function shortTime(value: string) {
   }
 }
 
-function subscribeRuntimeConfig(onChange: () => void) {
-  const timer = window.setTimeout(onChange, 0);
-  window.addEventListener("load", onChange);
-  return () => {
-    window.clearTimeout(timer);
-    window.removeEventListener("load", onChange);
-  };
-}
-
-function readRuntimeConfig() {
-  return window.XUNCHA_RADAR_CONFIG?.apiBaseUrl?.replace(/\/$/, "") || "";
-}
-
-function readServerRuntimeConfig() {
-  return "";
-}
-
 export default function Home() {
   const [provider, setProvider] = useState<Provider>("kimi");
   const [platforms, setPlatforms] = useState<string[]>(["全网", "抖音", "小红书", "B站"]);
@@ -203,32 +55,71 @@ export default function Home() {
   const [result, setResult] = useState<InvestigationResult | null>(null);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"clues" | "queries" | "logs">("clues");
-  const [gatewayState, setGatewayState] = useState<"idle" | "checking" | "ready" | "unreachable">("checking");
+  const [serviceState, setServiceState] = useState<"needs_key" | "checking" | "ready" | "unreachable">("checking");
+  const [apiKey, setApiKey] = useState("");
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [apiKeyPanelOpen, setApiKeyPanelOpen] = useState(false);
+  const [apiKeyMessage, setApiKeyMessage] = useState("");
+  const apiBase = DEFAULT_KIMI_API_BASE;
+  const [progressMessage, setProgressMessage] = useState("正在连接 Kimi K3 并准备联网检索…");
+  const [savingKey, setSavingKey] = useState(false);
 
-  const apiBaseUrl = useSyncExternalStore(subscribeRuntimeConfig, readRuntimeConfig, readServerRuntimeConfig);
-  const isDemoOnly = !apiBaseUrl;
   const selectedProvider = providers.find((item) => item.id === provider)!;
   const riskCount = useMemo(() => result?.clues.filter((item) => item.verdict === "重点核验").length ?? 0, [result]);
 
   useEffect(() => {
-    if (!apiBaseUrl) return;
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 10000);
-    const checkingTimer = window.setTimeout(() => setGatewayState("checking"), 0);
-    fetch(`${apiBaseUrl}/health`, { signal: controller.signal, cache: "no-store" })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => null);
-        if (!response.ok || !payload?.ok || !payload?.providers?.kimi) throw new Error("gateway unavailable");
-        setGatewayState("ready");
-      })
-      .catch(() => setGatewayState("unreachable"))
-      .finally(() => window.clearTimeout(timer));
-    return () => {
-      window.clearTimeout(timer);
-      window.clearTimeout(checkingTimer);
-      controller.abort();
-    };
-  }, [apiBaseUrl]);
+    const timer = window.setTimeout(() => {
+      const configuredBase = window.XUNCHA_RADAR_CONFIG?.directKimiApiBase?.replace(/\/$/, "") || DEFAULT_KIMI_API_BASE;
+      const storedKey = window.localStorage.getItem(API_KEY_STORAGE) || "";
+      setApiKeyDraft(storedKey);
+      if (!storedKey) {
+        setServiceState("needs_key");
+        setApiKeyPanelOpen(true);
+        return;
+      }
+      setApiKey(storedKey);
+      setServiceState("checking");
+      testKimiKey(storedKey, configuredBase)
+        .then(() => setServiceState("ready"))
+        .catch((keyError) => {
+          setServiceState("unreachable");
+          setApiKeyMessage(keyError instanceof Error ? keyError.message : "Kimi K3 连接失败");
+        });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  async function saveApiKey() {
+    const nextKey = apiKeyDraft.trim();
+    if (!nextKey) {
+      setApiKeyMessage("请输入 Kimi API Key。 ");
+      return;
+    }
+    setSavingKey(true);
+    setApiKeyMessage("正在验证 Kimi K3 权限…");
+    setServiceState("checking");
+    try {
+      await testKimiKey(nextKey, apiBase);
+      window.localStorage.setItem(API_KEY_STORAGE, nextKey);
+      setApiKey(nextKey);
+      setServiceState("ready");
+      setApiKeyMessage("Kimi K3 已验证，密钥只保存在这台电脑。 ");
+      setApiKeyPanelOpen(false);
+    } catch (keyError) {
+      setServiceState("unreachable");
+      setApiKeyMessage(keyError instanceof Error ? keyError.message : "Kimi K3 连接失败");
+    } finally {
+      setSavingKey(false);
+    }
+  }
+
+  function clearApiKey() {
+    window.localStorage.removeItem(API_KEY_STORAGE);
+    setApiKey("");
+    setApiKeyDraft("");
+    setServiceState("needs_key");
+    setApiKeyMessage("已清除这台电脑保存的密钥。 ");
+  }
 
   function togglePlatform(item: string) {
     setPlatforms((current) => {
@@ -248,71 +139,46 @@ export default function Home() {
       setError("请至少选择一个平台范围。");
       return;
     }
-
-    if (isDemoOnly) {
-      setRunState("running");
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      setResult({
-        ...demoResult,
-        task: { ...demoResult.task, objective: prompt.trim(), timeRange, platforms },
-        provider: selectedProvider.name,
-      });
-      setRunState("complete");
-      setActiveTab("clues");
+    if (provider !== "kimi") {
+      setError("当前直连版只启用了 Kimi K3；DeepSeek 与豆包将在后续接入。 ");
+      return;
+    }
+    if (!apiKey || serviceState !== "ready") {
+      setApiKeyPanelOpen(true);
+      setError("请先设置并验证这台电脑使用的 Kimi API Key。 ");
       return;
     }
 
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 360000);
     try {
       setRunState("running");
       setResult(null);
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 240000);
-      const response = await fetch(`${apiBaseUrl}/api/investigate/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify({ provider, prompt: prompt.trim(), timeRange, platforms }),
+      setProgressMessage("Kimi K3 正在拆解任务并开始联网检索…");
+      const completed = await runKimiDirect({
+        apiKey,
+        apiBase,
+        provider,
+        prompt: prompt.trim(),
+        timeRange,
+        platforms,
         signal: controller.signal,
+        onProgress: setProgressMessage,
       });
-      if (!response.ok || !response.body) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.error || `调查请求失败（${response.status}）`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let completed: InvestigationResult | null = null;
-      let streamError = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split("\n\n");
-        buffer = events.pop() || "";
-        for (const block of events) {
-          const event = block.match(/^event:\s*(.+)$/m)?.[1]?.trim();
-          const data = block.match(/^data:\s*(.+)$/m)?.[1]?.trim();
-          if (!data) continue;
-          const payload = JSON.parse(data);
-          if (event === "result") completed = payload as InvestigationResult;
-          if (event === "error") streamError = String(payload?.error || "调查请求失败");
-        }
-      }
-      window.clearTimeout(timeout);
-      if (streamError) throw new Error(streamError);
-      if (!completed) throw new Error("调查连接提前结束，未收到完整结果，请重试。");
       setResult(completed);
       setRunState("complete");
       setActiveTab("clues");
     } catch (runError) {
       setRunState("error");
       if (runError instanceof DOMException && runError.name === "AbortError") {
-        setError("调查超过4分钟仍未完成，已自动停止。请缩小时间或平台范围后重试。");
+        setError("调查超过6分钟仍未完成，已自动停止。请缩小时间或平台范围后重试。");
       } else if (runError instanceof TypeError) {
-        setError("无法连接调查服务。请刷新页面后重试；若仍失败，请导出诊断信息并反馈。 ");
+        setError("浏览器无法直连 Kimi 官方 API。请先点击“设置 Kimi Key”重新验证；若验证也失败，说明公司网络拦截了 api.moonshot.cn。 ");
       } else {
         setError(runError instanceof Error ? runError.message : "调查请求失败，请稍后重试。");
       }
+    } finally {
+      window.clearTimeout(timeout);
     }
   }
 
@@ -348,16 +214,46 @@ export default function Home() {
             <span className="eyebrow">NEW INVESTIGATION</span>
             <h1>发起一次内容风险调查</h1>
           </div>
-          <div className={`runtime-badge ${isDemoOnly || gatewayState === "unreachable" ? "demo" : "live"}`}>
-            <i /> {isDemoOnly
-              ? "演示模式 · 待连接安全网关"
-              : gatewayState === "ready"
-                ? "实时模式 · Kimi K3 网关已验证"
-                : gatewayState === "unreachable"
-                  ? "实时模式 · 网关当前不可达"
-                  : "实时模式 · 正在验证网关"}
+          <div className="runtime-actions">
+            <div className={`runtime-badge ${serviceState === "ready" ? "live" : "demo"}`}>
+              <i /> {serviceState === "ready"
+                ? "实时模式 · Kimi K3 官方直连已验证"
+                : serviceState === "needs_key"
+                  ? "实时模式 · 待设置本机 Kimi Key"
+                  : serviceState === "unreachable"
+                    ? "实时模式 · Kimi 直连验证失败"
+                    : "实时模式 · 正在验证 Kimi K3"}
+            </div>
+            <button className="key-settings-button" type="button" onClick={() => setApiKeyPanelOpen((current) => !current)}>
+              {serviceState === "ready" ? "管理 Kimi Key" : "设置 Kimi Key"}
+            </button>
           </div>
         </div>
+
+        {apiKeyPanelOpen && (
+          <section className="api-key-panel" aria-label="Kimi API Key 设置">
+            <div className="api-key-copy">
+              <b>Kimi K3 本机直连</b>
+              <p>密钥只保存在这台电脑的浏览器中，不会写入 GitHub，也不再经过 workers.dev 或 chatgpt.site。</p>
+            </div>
+            <label>
+              <span>Kimi API Key</span>
+              <input
+                type="password"
+                value={apiKeyDraft}
+                onChange={(event) => setApiKeyDraft(event.target.value)}
+                placeholder="粘贴 Moonshot 开放平台 API Key"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+            <div className="api-key-actions">
+              <button type="button" onClick={saveApiKey} disabled={savingKey}>{savingKey ? "正在验证" : "验证并保存"}</button>
+              {apiKey && <button className="quiet" type="button" onClick={clearApiKey}>清除本机密钥</button>}
+            </div>
+            {apiKeyMessage && <p className={`api-key-message ${serviceState === "ready" ? "success" : ""}`}>{apiKeyMessage}</p>}
+          </section>
+        )}
 
         <label className="prompt-box">
           <span className="prompt-index">01</span>
@@ -380,6 +276,8 @@ export default function Home() {
                   className={provider === item.id ? "active" : ""}
                   onClick={() => setProvider(item.id)}
                   type="button"
+                  disabled={item.id !== "kimi"}
+                  title={item.id === "kimi" ? "Kimi K3 官方直连" : "待后续接入"}
                 >
                   <span className="model-mark">{item.mark}</span>
                   <span><b>{item.name}</b><small>{item.detail}</small></span>
@@ -397,7 +295,7 @@ export default function Home() {
 
           <button className="run-button" type="button" onClick={runInvestigation} disabled={runState === "running"}>
             <span className="run-icon">⌁</span>
-            <span>{runState === "running" ? "调查进行中" : isDemoOnly ? "运行演示调查" : "开始调查"}<small>{selectedProvider.name} · {timeRange}</small></span>
+            <span>{runState === "running" ? "调查进行中" : "开始调查"}<small>{selectedProvider.name} K3 · {timeRange}</small></span>
             <b>↗</b>
           </button>
         </div>
@@ -411,7 +309,7 @@ export default function Home() {
               </button>
             ))}
           </div>
-          <span className="coverage-note">第一版基于公开网页索引，平台内部完整覆盖将在后续接入</span>
+          <span className="coverage-note">第一版基于 Kimi 联网搜索，平台内部完整覆盖将在后续接入</span>
         </div>
         {error && <div className="error-banner"><b>!</b>{error}</div>}
       </section>
@@ -436,7 +334,7 @@ export default function Home() {
           <div className="panel-heading"><span>覆盖状态</span><small>COVERAGE</small></div>
           <div className="coverage-list">
             {(result?.coverage ?? [
-              { source: "公开网页索引", status: "not_covered", count: 0, note: "等待开始" },
+              { source: "Kimi 联网搜索", status: "not_covered", count: 0, note: "等待开始" },
               { source: "平台原生页面", status: "not_covered", count: 0, note: "等待开始" },
               { source: "评论区", status: "not_covered", count: 0, note: "第一版未接入" },
             ]).map((item) => (
@@ -467,8 +365,8 @@ export default function Home() {
             <div className="running-state">
               <div className="scanner"><span /></div>
               <span className="eyebrow">INVESTIGATION IN PROGRESS</span>
-              <h2>正在编译任务并检索公开来源</h2>
-              <p>等待模型返回任务结构、查询计划和可核验线索。第一版完成后一次性呈现结果。</p>
+              <h2>正在由 Kimi K3 执行联网调查</h2>
+              <p>{progressMessage}</p>
               <div className="running-bars"><i /><i /><i /><i /></div>
             </div>
           )}
@@ -593,7 +491,7 @@ export default function Home() {
 
       <footer className="statusbar">
         <span><i className="green" /> 任务编译器 ONLINE</span>
-        <span><i className={isDemoOnly ? "amber" : "green"} /> 安全网关 {isDemoOnly ? "NOT CONNECTED" : "CONNECTED"}</span>
+        <span><i className={serviceState === "ready" ? "green" : "amber"} /> KIMI K3 DIRECT {serviceState === "ready" ? "READY" : "SETUP"}</span>
         <span><i className="slate" /> 平台原生采集 ROADMAP</span>
         <b>所有“未发现”结论均需先排除采集失败</b>
       </footer>
