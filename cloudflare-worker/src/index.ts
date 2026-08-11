@@ -94,7 +94,11 @@ function asRecord(value: unknown): UnknownRecord {
 
 async function callModel(config: ProviderConfig, system: string, user: string) {
   const endpoint = `${config.apiBase.replace(/\/$/, "")}/chat/completions`;
-  const sampling = config.id === "kimi" ? {} : { temperature: 0.2 };
+  const sampling = config.id === "kimi" && /^kimi-k2\.(5|6)$/.test(config.model)
+    ? { thinking: { type: "disabled" }, temperature: 0.6 }
+    : config.id === "kimi"
+      ? {}
+      : { temperature: 0.2 };
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
