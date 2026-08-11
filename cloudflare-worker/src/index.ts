@@ -90,12 +90,13 @@ function asRecord(value: unknown): UnknownRecord {
 
 async function callModel(config: ProviderConfig, system: string, user: string) {
   const endpoint = `${config.apiBase.replace(/\/$/, "")}/chat/completions`;
+  const temperature = config.model === "kimi-k2.5" ? 1 : 0.2;
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: config.model,
-      temperature: 0.2,
+      temperature,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
