@@ -266,7 +266,7 @@ export default function Home() {
       setRunState("running");
       setResult(null);
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 180000);
+      const timeout = window.setTimeout(() => controller.abort(), 240000);
       const response = await fetch(`${apiBaseUrl}/api/investigate/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
@@ -307,9 +307,9 @@ export default function Home() {
     } catch (runError) {
       setRunState("error");
       if (runError instanceof DOMException && runError.name === "AbortError") {
-        setError("调查超过3分钟仍未完成，已自动停止。请缩小时间或平台范围后重试。");
+        setError("调查超过4分钟仍未完成，已自动停止。请缩小时间或平台范围后重试。");
       } else if (runError instanceof TypeError) {
-        setError("无法连接调查网关。请刷新页面后重试；若仍失败，可能是当前网络阻断了 Cloudflare Worker。 ");
+        setError("无法连接调查服务。请刷新页面后重试；若仍失败，请导出诊断信息并反馈。 ");
       } else {
         setError(runError instanceof Error ? runError.message : "调查请求失败，请稍后重试。");
       }
