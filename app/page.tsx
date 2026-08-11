@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 
 type Provider = "kimi" | "deepseek" | "doubao";
 type RunState = "idle" | "running" | "complete" | "error";
@@ -177,6 +177,18 @@ function shortTime(value: string) {
   }
 }
 
+function subscribeRuntimeConfig() {
+  return () => undefined;
+}
+
+function readRuntimeConfig() {
+  return window.XUNCHA_RADAR_CONFIG?.apiBaseUrl?.replace(/\/$/, "") || "";
+}
+
+function readServerRuntimeConfig() {
+  return "";
+}
+
 export default function Home() {
   const [provider, setProvider] = useState<Provider>("kimi");
   const [platforms, setPlatforms] = useState<string[]>(["全网", "抖音", "小红书", "B站"]);
@@ -187,7 +199,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"clues" | "queries" | "logs">("clues");
 
-  const apiBaseUrl = typeof window !== "undefined" ? window.XUNCHA_RADAR_CONFIG?.apiBaseUrl?.replace(/\/$/, "") : "";
+  const apiBaseUrl = useSyncExternalStore(subscribeRuntimeConfig, readRuntimeConfig, readServerRuntimeConfig);
   const isDemoOnly = !apiBaseUrl;
   const selectedProvider = providers.find((item) => item.id === provider)!;
   const riskCount = useMemo(() => result?.clues.filter((item) => item.verdict === "重点核验").length ?? 0, [result]);
