@@ -29,5 +29,9 @@ test("renders development preview metadata", async () => {
     response.headers.get("content-type") ?? "",
     /^text\/html\b/i,
   );
-  assert.match(await response.text(), developmentPreviewMeta);
+  const html = await response.text();
+  assert.match(html, developmentPreviewMeta);
+  assert.match(html, /config\.js\?v=kimi-direct-1/);
+  assert.match(html, /设置 Kimi Key/);
+  assert.doesNotMatch(html, /handdoranibcu\.chatgpt\.site|ergoo0707\.workers\.dev/);
 });
