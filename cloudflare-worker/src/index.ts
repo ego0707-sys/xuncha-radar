@@ -13,6 +13,7 @@ interface Env {
 type ProviderName = "kimi" | "deepseek" | "doubao";
 
 type ProviderConfig = {
+  id: ProviderName;
   label: string;
   apiKey: string;
   apiBase: string;
@@ -47,18 +48,21 @@ function json(data: unknown, init: ResponseInit = {}) {
 function providerConfig(provider: ProviderName, env: Env): ProviderConfig {
   const configs: Record<ProviderName, ProviderConfig> = {
     kimi: {
+      id: "kimi",
       label: "Kimi",
       apiKey: env.KIMI_API_KEY || "",
       apiBase: env.KIMI_API_BASE || "https://api.moonshot.cn/v1",
       model: env.KIMI_MODEL || "kimi-k2.5",
     },
     deepseek: {
+      id: "deepseek",
       label: "DeepSeek",
       apiKey: env.DEEPSEEK_API_KEY || "",
       apiBase: env.DEEPSEEK_API_BASE || "https://api.deepseek.com",
       model: env.DEEPSEEK_MODEL || "deepseek-chat",
     },
     doubao: {
+      id: "doubao",
       label: "豆包",
       apiKey: env.DOUBAO_API_KEY || "",
       apiBase: env.DOUBAO_API_BASE || "https://ark.cn-beijing.volces.com/api/v3",
@@ -90,13 +94,13 @@ function asRecord(value: unknown): UnknownRecord {
 
 async function callModel(config: ProviderConfig, system: string, user: string) {
   const endpoint = `${config.apiBase.replace(/\/$/, "")}/chat/completions`;
-  const temperature = config.model === "kimi-k2.5" ? 1 : 0.2;
+  const sampling = config.id === "kimi" ? {} : { temperature: 0.2 };
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: config.model,
-      temperature,
+      ...sampling,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -112,6 +116,36 @@ async function callModel(config: ProviderConfig, system: string, user: string) {
   const content = payload.choices?.[0]?.message?.content;
   if (!content) throw new Error(`${config.label} API 未返回有效内容`);
   return { raw: content, parsed: parseModelJson(content) };
+}
+
+async function resolveAvailableModel(config: ProviderConfig) {
+  if (config.id !== "kimi") return config;
+  try {
+    const response = await fetch(`${config.apiBase.replace(/\/$/, "")}/models`, {
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+    });
+    if (!response.ok) return config;
+    const payload = await response.json() as { data?: Array<{ id?: string }> };
+    const ids = (payload.data || []).map((item) => item.id || "").filter(Boolean);
+    if (ids.includes(config.model)) return config;
+
+    const preferences = [
+      "kimi-k2.6",
+      "kimi-k2.5",
+      "kimi-k2-0905-preview",
+      "kimi-k2-turbo-preview",
+      "kimi-k2",
+      "moonshot-v1-auto",
+      "moonshot-v1-128k",
+      "moonshot-v1-32k",
+      "moonshot-v1-8k",
+    ];
+    const model = preferences.find((item) => ids.includes(item))
+      || ids.find((item) => /^(kimi|moonshot-v1)/.test(item));
+    return model ? { ...config, model } : config;
+  } catch {
+    return config;
+  }
 }
 
 function escapeXml(value: string) {
@@ -255,14 +289,19 @@ async function investigate(request: Request, env: Env) {
   if (!provider || !["kimi", "deepseek", "doubao"].includes(provider)) return json({ error: "请选择支持的调查模型" }, { status: 400 });
   if (!prompt) return json({ error: "请输入调查任务" }, { status: 400 });
 
-  const config = providerConfig(provider, env);
-  if (!config.apiKey) return json({ error: `${config.label} 尚未配置 API Key` }, { status: 503 });
-  if (!config.model) return json({ error: `${config.label} 尚未配置模型或推理接入点` }, { status: 503 });
+  const configured = providerConfig(provider, env);
+  if (!configured.apiKey) return json({ error: `${configured.label} 尚未配置 API Key` }, { status: 503 });
+  if (!configured.model) return json({ error: `${configured.label} 尚未配置模型或推理接入点` }, { status: 503 });
+  const config = await resolveAvailableModel(configured);
 
   const startedAt = Date.now();
   const logs: Array<{ at: string; stage: string; message: string; status: string }> = [];
   const log = (stage: string, message: string, status = "complete") => logs.push({ at: new Date().toISOString().slice(11, 19), stage, message, status });
   let task: ReturnType<typeof fallbackTask>;
+
+  if (config.model !== configured.model) {
+    log("模型适配", `当前账户未开放 ${configured.model}，已自动切换为 ${config.model}`);
+  }
 
   try {
     const compile = await callModel(config,
