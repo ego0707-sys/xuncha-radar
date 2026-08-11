@@ -5,7 +5,7 @@ workers_dev = true
 
 [vars]
 KIMI_API_BASE = "https://api.moonshot.cn/v1"
-KIMI_MODEL = "kimi-k2.5"
+KIMI_MODEL = "kimi-k3"
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
 DOUBAO_API_BASE = "https://ark.cn-beijing.volces.com/api/v3"

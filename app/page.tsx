@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 type Provider = "kimi" | "deepseek" | "doubao";
 type RunState = "idle" | "running" | "complete" | "error";
@@ -67,7 +67,7 @@ declare global {
 }
 
 const providers: Array<{ id: Provider; name: string; detail: string; mark: string }> = [
-  { id: "kimi", name: "Kimi", detail: "长上下文", mark: "K" },
+  { id: "kimi", name: "Kimi", detail: "K3", mark: "K" },
   { id: "deepseek", name: "DeepSeek", detail: "深度研判", mark: "D" },
   { id: "doubao", name: "豆包", detail: "中文理解", mark: "豆" },
 ];
@@ -177,8 +177,13 @@ function shortTime(value: string) {
   }
 }
 
-function subscribeRuntimeConfig() {
-  return () => undefined;
+function subscribeRuntimeConfig(onChange: () => void) {
+  const timer = window.setTimeout(onChange, 0);
+  window.addEventListener("load", onChange);
+  return () => {
+    window.clearTimeout(timer);
+    window.removeEventListener("load", onChange);
+  };
 }
 
 function readRuntimeConfig() {
@@ -198,11 +203,32 @@ export default function Home() {
   const [result, setResult] = useState<InvestigationResult | null>(null);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"clues" | "queries" | "logs">("clues");
+  const [gatewayState, setGatewayState] = useState<"idle" | "checking" | "ready" | "unreachable">("checking");
 
   const apiBaseUrl = useSyncExternalStore(subscribeRuntimeConfig, readRuntimeConfig, readServerRuntimeConfig);
   const isDemoOnly = !apiBaseUrl;
   const selectedProvider = providers.find((item) => item.id === provider)!;
   const riskCount = useMemo(() => result?.clues.filter((item) => item.verdict === "重点核验").length ?? 0, [result]);
+
+  useEffect(() => {
+    if (!apiBaseUrl) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 10000);
+    const checkingTimer = window.setTimeout(() => setGatewayState("checking"), 0);
+    fetch(`${apiBaseUrl}/health`, { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.ok || !payload?.providers?.kimi) throw new Error("gateway unavailable");
+        setGatewayState("ready");
+      })
+      .catch(() => setGatewayState("unreachable"))
+      .finally(() => window.clearTimeout(timer));
+    return () => {
+      window.clearTimeout(timer);
+      window.clearTimeout(checkingTimer);
+      controller.abort();
+    };
+  }, [apiBaseUrl]);
 
   function togglePlatform(item: string) {
     setPlatforms((current) => {
@@ -239,19 +265,54 @@ export default function Home() {
     try {
       setRunState("running");
       setResult(null);
-      const response = await fetch(`${apiBaseUrl}/api/investigate`, {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 180000);
+      const response = await fetch(`${apiBaseUrl}/api/investigate/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify({ provider, prompt: prompt.trim(), timeRange, platforms }),
+        signal: controller.signal,
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || `调查请求失败（${response.status}）`);
-      setResult(payload);
+      if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error || `调查请求失败（${response.status}）`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let completed: InvestigationResult | null = null;
+      let streamError = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop() || "";
+        for (const block of events) {
+          const event = block.match(/^event:\s*(.+)$/m)?.[1]?.trim();
+          const data = block.match(/^data:\s*(.+)$/m)?.[1]?.trim();
+          if (!data) continue;
+          const payload = JSON.parse(data);
+          if (event === "result") completed = payload as InvestigationResult;
+          if (event === "error") streamError = String(payload?.error || "调查请求失败");
+        }
+      }
+      window.clearTimeout(timeout);
+      if (streamError) throw new Error(streamError);
+      if (!completed) throw new Error("调查连接提前结束，未收到完整结果，请重试。");
+      setResult(completed);
       setRunState("complete");
       setActiveTab("clues");
     } catch (runError) {
       setRunState("error");
-      setError(runError instanceof Error ? runError.message : "调查请求失败，请稍后重试。");
+      if (runError instanceof DOMException && runError.name === "AbortError") {
+        setError("调查超过3分钟仍未完成，已自动停止。请缩小时间或平台范围后重试。");
+      } else if (runError instanceof TypeError) {
+        setError("无法连接调查网关。请刷新页面后重试；若仍失败，可能是当前网络阻断了 Cloudflare Worker。 ");
+      } else {
+        setError(runError instanceof Error ? runError.message : "调查请求失败，请稍后重试。");
+      }
     }
   }
 
@@ -287,8 +348,14 @@ export default function Home() {
             <span className="eyebrow">NEW INVESTIGATION</span>
             <h1>发起一次内容风险调查</h1>
           </div>
-          <div className={`runtime-badge ${isDemoOnly ? "demo" : "live"}`}>
-            <i /> {isDemoOnly ? "演示模式 · 待连接安全网关" : "实时模式 · 安全网关已连接"}
+          <div className={`runtime-badge ${isDemoOnly || gatewayState === "unreachable" ? "demo" : "live"}`}>
+            <i /> {isDemoOnly
+              ? "演示模式 · 待连接安全网关"
+              : gatewayState === "ready"
+                ? "实时模式 · Kimi K3 网关已验证"
+                : gatewayState === "unreachable"
+                  ? "实时模式 · 网关当前不可达"
+                  : "实时模式 · 正在验证网关"}
           </div>
         </div>
 

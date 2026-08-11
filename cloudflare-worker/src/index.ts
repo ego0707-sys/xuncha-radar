@@ -34,7 +34,8 @@ type UnknownRecord = Record<string, unknown>;
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, Accept",
+  "Access-Control-Expose-Headers": "X-Xuncha-Model",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -52,7 +53,7 @@ function providerConfig(provider: ProviderName, env: Env): ProviderConfig {
       label: "Kimi",
       apiKey: env.KIMI_API_KEY || "",
       apiBase: env.KIMI_API_BASE || "https://api.moonshot.cn/v1",
-      model: env.KIMI_MODEL || "kimi-k2.5",
+      model: env.KIMI_MODEL || "kimi-k3",
     },
     deepseek: {
       id: "deepseek",
@@ -94,11 +95,7 @@ function asRecord(value: unknown): UnknownRecord {
 
 async function callModel(config: ProviderConfig, system: string, user: string) {
   const endpoint = `${config.apiBase.replace(/\/$/, "")}/chat/completions`;
-  const sampling = config.id === "kimi" && /^kimi-k2\.(5|6)$/.test(config.model)
-    ? { thinking: { type: "disabled" }, temperature: 0.6 }
-    : config.id === "kimi"
-      ? {}
-      : { temperature: 0.2 };
+  const sampling = config.id === "kimi" ? {} : { temperature: 0.2 };
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
@@ -122,33 +119,31 @@ async function callModel(config: ProviderConfig, system: string, user: string) {
   return { raw: content, parsed: parseModelJson(content) };
 }
 
-async function resolveAvailableModel(config: ProviderConfig) {
+function isKimiK3Model(model: string) {
+  return /^kimi[-_.]?k?3(?:[-_.].*)?$/i.test(model.trim());
+}
+
+async function resolveRequiredModel(config: ProviderConfig) {
   if (config.id !== "kimi") return config;
   try {
     const response = await fetch(`${config.apiBase.replace(/\/$/, "")}/models`, {
       headers: { Authorization: `Bearer ${config.apiKey}` },
     });
-    if (!response.ok) return config;
+    if (!response.ok) {
+      if (isKimiK3Model(config.model)) return config;
+      throw new Error("无法读取 Kimi 模型列表，且 KIMI_MODEL 不是 K3 模型标识");
+    }
     const payload = await response.json() as { data?: Array<{ id?: string }> };
     const ids = (payload.data || []).map((item) => item.id || "").filter(Boolean);
-    if (ids.includes(config.model)) return config;
+    if (ids.includes(config.model) && isKimiK3Model(config.model)) return config;
 
-    const preferences = [
-      "kimi-k2.6",
-      "kimi-k2.5",
-      "kimi-k2-0905-preview",
-      "kimi-k2-turbo-preview",
-      "kimi-k2",
-      "moonshot-v1-auto",
-      "moonshot-v1-128k",
-      "moonshot-v1-32k",
-      "moonshot-v1-8k",
-    ];
-    const model = preferences.find((item) => ids.includes(item))
-      || ids.find((item) => /^(kimi|moonshot-v1)/.test(item));
-    return model ? { ...config, model } : config;
-  } catch {
-    return config;
+    const model = ids.find((item) => /^kimi-k3$/i.test(item))
+      || ids.find((item) => isKimiK3Model(item));
+    if (!model) throw new Error("当前 API Key 的可用模型中未发现 Kimi K3；系统不会降级调用 K2 模型");
+    return { ...config, model };
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    throw new Error("Kimi K3 模型校验失败");
   }
 }
 
@@ -296,16 +291,19 @@ async function investigate(request: Request, env: Env) {
   const configured = providerConfig(provider, env);
   if (!configured.apiKey) return json({ error: `${configured.label} 尚未配置 API Key` }, { status: 503 });
   if (!configured.model) return json({ error: `${configured.label} 尚未配置模型或推理接入点` }, { status: 503 });
-  const config = await resolveAvailableModel(configured);
+  let config: ProviderConfig;
+  try {
+    config = await resolveRequiredModel(configured);
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Kimi K3 模型校验失败" }, { status: 503 });
+  }
 
   const startedAt = Date.now();
   const logs: Array<{ at: string; stage: string; message: string; status: string }> = [];
   const log = (stage: string, message: string, status = "complete") => logs.push({ at: new Date().toISOString().slice(11, 19), stage, message, status });
   let task: ReturnType<typeof fallbackTask>;
 
-  if (config.model !== configured.model) {
-    log("模型适配", `当前账户未开放 ${configured.model}，已自动切换为 ${config.model}`);
-  }
+  if (config.id === "kimi") log("模型校验", `已锁定 Kimi K3：${config.model}`);
 
   try {
     const compile = await callModel(config,
@@ -403,6 +401,42 @@ async function investigate(request: Request, env: Env) {
   });
 }
 
+async function streamInvestigation(request: Request, env: Env) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      let closed = false;
+      const send = (event: string, data: unknown) => {
+        if (closed) return;
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
+      send("ready", { ok: true });
+      const heartbeat = setInterval(() => send("heartbeat", { at: new Date().toISOString() }), 5000);
+
+      investigate(request, env)
+        .then(async (response) => {
+          const payload = await response.json();
+          send(response.ok ? "result" : "error", payload);
+        })
+        .catch((error) => send("error", { error: error instanceof Error ? error.message : "调查请求失败" }))
+        .finally(() => {
+          clearInterval(heartbeat);
+          closed = true;
+          controller.close();
+        });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+  });
+}
+
 const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
@@ -411,7 +445,8 @@ const worker = {
       return json({
         ok: true,
         service: "xuncha-radar-gateway",
-        version: "0.1.0",
+        version: "0.1.1",
+        requirements: { kimi: "K3 only; K2 fallback disabled" },
         providers: {
           kimi: Boolean(env.KIMI_API_KEY),
           deepseek: Boolean(env.DEEPSEEK_API_KEY),
@@ -419,6 +454,17 @@ const worker = {
         },
       });
     }
+    if (request.method === "GET" && url.pathname === "/api/kimi/model-status") {
+      const configured = providerConfig("kimi", env);
+      if (!configured.apiKey) return json({ ok: false, error: "Kimi 尚未配置 API Key" }, { status: 503 });
+      try {
+        const resolved = await resolveRequiredModel(configured);
+        return json({ ok: true, family: "Kimi K3", model: resolved.model, fallback: false });
+      } catch (error) {
+        return json({ ok: false, error: error instanceof Error ? error.message : "Kimi K3 模型校验失败" }, { status: 503 });
+      }
+    }
+    if (request.method === "POST" && url.pathname === "/api/investigate/stream") return streamInvestigation(request, env);
     if (request.method === "POST" && url.pathname === "/api/investigate") return investigate(request, env);
     return json({ error: "Not found" }, { status: 404 });
   },
