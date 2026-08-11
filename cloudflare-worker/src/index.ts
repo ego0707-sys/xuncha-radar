@@ -222,8 +222,9 @@ function normalizeTask(task: unknown, prompt: string, timeRange: string, platfor
   return {
     objective: String(taskObject.objective || fallback.objective),
     mode: String(taskObject.mode || fallback.mode),
-    timeRange: String(taskObject.timeRange || timeRange),
-    platforms: Array.isArray(taskObject.platforms) ? taskObject.platforms.map(String) : platforms,
+    // 时间和平台是用户明确输入的执行边界，不允许模型改写为对象或其他格式。
+    timeRange,
+    platforms,
     riskHypotheses: Array.isArray(taskObject.riskHypotheses) ? taskObject.riskHypotheses.map(String).slice(0, 5) : fallback.riskHypotheses,
     inclusionCriteria: Array.isArray(taskObject.inclusionCriteria) ? taskObject.inclusionCriteria.map(String).slice(0, 5) : fallback.inclusionCriteria,
     exclusions: Array.isArray(taskObject.exclusions) ? taskObject.exclusions.map(String).slice(0, 5) : fallback.exclusions,
