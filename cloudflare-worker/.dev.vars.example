@@ -1,0 +1,9 @@
+# 仅用于本地开发。复制为 .dev.vars 后填写，禁止提交真实密钥。
+KIMI_API_KEY=
+DEEPSEEK_API_KEY=
+DOUBAO_API_KEY=
+
+# 可选：覆盖 wrangler.toml 中的模型标识。
+KIMI_MODEL=kimi-k2.5
+DEEPSEEK_MODEL=deepseek-chat
+DOUBAO_MODEL=

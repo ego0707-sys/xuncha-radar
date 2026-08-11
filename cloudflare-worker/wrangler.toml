@@ -1,0 +1,13 @@
+name = "xuncha-radar-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-08-11"
+workers_dev = true
+
+[vars]
+KIMI_API_BASE = "https://api.moonshot.cn/v1"
+KIMI_MODEL = "kimi-k2.5"
+DEEPSEEK_API_BASE = "https://api.deepseek.com"
+DEEPSEEK_MODEL = "deepseek-chat"
+DOUBAO_API_BASE = "https://ark.cn-beijing.volces.com/api/v3"
+# 豆包通常使用你在火山方舟创建的推理接入点 ID，请部署时设置 DOUBAO_MODEL。
+DOUBAO_MODEL = ""
