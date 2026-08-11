@@ -8,11 +8,11 @@
 
 - Kimi、DeepSeek、豆包三种模型入口，模型可以替换；
 - 通用调查任务编译器，不按宗教、谣言、未成年人等主题硬编码；
-- 公开网页检索与真实链接输出；
+- Kimi K3 官方 API 直连及内置联网搜索；
 - 对“完整覆盖、部分覆盖、采集失败、本轮未覆盖”进行区分；
 - 任务说明、查询策略、证据卡、AI研判和执行日志；
-- 演示模式：安全网关未连接时可直接体验界面，但所有演示内容均明确标注；
-- GitHub Pages 前端与 Cloudflare Worker 安全网关分离。
+- GitHub Pages 网址保持不变，不依赖 `workers.dev` 或 `chatgpt.site`；
+- API Key 由每台团队电脑首次使用时填写，只保存在该浏览器本机。
 
 第一版不包含平台内部完整搜索、评论区采集、长期证据库、账号关系图谱和持续监测。这些能力将在验证核心链路有效后逐步接入。
 
@@ -20,8 +20,8 @@
 
 ```text
 app/                    调查工作台前端
-public/config.js        前端运行配置，仅填写网关地址
-cloudflare-worker/      API安全网关、模型适配和公开网页检索
+public/config.js        Kimi 官方 API 地址配置（不含密钥）
+cloudflare-worker/      旧版可选安全网关，不再是 GitHub Pages 的必需链路
 .github/workflows/      GitHub Pages自动发布
 ```
 
@@ -32,9 +32,23 @@ npm install
 npm run dev
 ```
 
-未填写 `public/config.js` 的 `apiBaseUrl` 时，网页自动进入演示模式，不会伪造实时调查结果。
+首次打开页面时，点击“设置 Kimi Key”，粘贴 Moonshot 开放平台 API Key。页面会先调用 `/models` 验证该 Key 确实可以使用 `kimi-k3`，验证通过后才允许开始调查；系统不会降级到 K2。
 
-## 部署安全网关
+密钥保存在浏览器 `localStorage`，不会写入 GitHub 源码、GitHub Pages 构建产物或网页导出的诊断文件。需要在多台团队电脑使用时，每台电脑各设置一次。
+
+## 直连配置
+
+`public/config.js` 只保存非敏感的 Kimi API 基础地址：
+
+```js
+window.XUNCHA_RADAR_CONFIG = {
+  directKimiApiBase: "https://api.moonshot.cn/v1",
+};
+```
+
+调查固定使用 `kimi-k3`，并通过 Kimi 官方 `$web_search` 工具完成公开网络检索。由于 GitHub Pages 是静态托管，GitHub Secret 无法在浏览器运行时充当后端密钥；不要把真实 API Key 写进 `config.js` 或公开仓库。
+
+## 可选 Cloudflare 网关（非当前默认）
 
 进入 `cloudflare-worker`：
 
@@ -65,15 +79,7 @@ DOUBAO_MODEL = "你的推理接入点ID"
 npm run deploy
 ```
 
-部署成功后，将 Worker 地址写入 `public/config.js`：
-
-```js
-window.XUNCHA_RADAR_CONFIG = {
-  apiBaseUrl: "https://你的-worker.workers.dev",
-};
-```
-
-API Key始终只保存在 Cloudflare Worker Secret 中，不会发送给访问网页的用户。
+该目录保留给网络允许访问 `workers.dev` 的环境。当前 GitHub Pages 正式版不再引用它。
 
 ## 发布 GitHub Pages
 
@@ -81,8 +87,8 @@ API Key始终只保存在 Cloudflare Worker Secret 中，不会发送给访问�
 
 ## 当前检索边界
 
-第一版使用公开网页索引发现线索，可以覆盖搜索引擎已收录的平台页面，但不能承诺完整检索抖音、小红书、B站、贴吧等平台内部内容。页面返回“0条”时，会同时展示采集状态；只要采集失败，就不会写成“未发现”。
+第一版使用 Kimi K3 内置联网搜索发现线索，可以覆盖搜索服务能够访问的公开页面，但不能承诺完整检索抖音、小红书、B站、贴吧等平台内部内容。页面返回“0条”时，会同时展示采集状态；没有真实可核验链接的内容不会进入线索区。
 
 ## 使用提醒
 
-本项目不在第一版加入访客频率、每日预算或全站额度限制。公开访问产生的所有模型调用费用由密钥所属账户承担。后续可以在不改动前端的情况下，在 Worker 中增加预算和滥用保护。
+本项目不在第一版加入访客频率、每日预算或全站额度限制。每台电脑发起的模型调用费用由其本机保存的密钥所属账户承担。团队成员不要在公共电脑上保存密钥；如需撤销，可在页面中点击“清除本机密钥”。
