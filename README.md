@@ -30,6 +30,12 @@ render.yaml             Render 免费 Web Service 配置
 
 仓库包含 `render.yaml` 和 `Dockerfile`。在 Render 中连接本仓库并创建 Blueprint 或 Web Service 后，会自动构建前端并启动服务端 Agent；健康检查路径为 `/healthz`。
 
+## 无需银行卡的临时测试
+
+[在 GitHub Codespaces 中启动巡查雷达](https://codespaces.new/ego0707-sys/xuncha-radar?quickstart=1)
+
+个人 GitHub 账号包含每月免费 Codespaces 额度，创建时无需提供付款信息。首次启动会自动安装依赖、构建前端并运行完整服务；构建完成后浏览器会打开转发的 10000 端口。该方式适合第一版效果验证，Codespace 停止后测试网址也会暂停。
+
 ## 本地运行一体化版本
 
 ```bash
