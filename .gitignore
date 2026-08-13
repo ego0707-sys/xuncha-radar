@@ -44,3 +44,5 @@ next-env.d.ts
 /cloudflare-worker/.dev.vars
 /cloudflare-worker/.test-dist/
 /cloudflare-worker/.worker-dist/
+__pycache__/
+*.py[cod]

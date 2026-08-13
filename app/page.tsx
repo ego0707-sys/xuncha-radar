@@ -6,12 +6,6 @@ import { runKimiDirect, testKimiKey } from "./kimi-direct";
 
 type RunState = "idle" | "running" | "complete" | "error";
 
-declare global {
-  interface Window {
-    XUNCHA_RADAR_CONFIG?: { directKimiApiBase?: string };
-  }
-}
-
 const providers: Array<{ id: Provider; name: string; detail: string; mark: string }> = [
   { id: "kimi", name: "Kimi", detail: "K3", mark: "K" },
   { id: "deepseek", name: "DeepSeek", detail: "深度研判", mark: "D" },
@@ -21,7 +15,6 @@ const providers: Array<{ id: Provider; name: string; detail: string; mark: strin
 const platformOptions = ["全网", "抖音", "小红书", "B站", "微博", "贴吧", "百家号"];
 const timeOptions = ["近24小时", "近48小时", "近7天", "近30天", "不限时间"];
 const API_KEY_STORAGE = "xuncha-radar:kimi-api-key";
-const DEFAULT_KIMI_API_BASE = "https://api.moonshot.cn/v1";
 
 function statusText(status: CoverageItem["status"]) {
   return {
@@ -60,7 +53,6 @@ export default function Home() {
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [apiKeyPanelOpen, setApiKeyPanelOpen] = useState(false);
   const [apiKeyMessage, setApiKeyMessage] = useState("");
-  const apiBase = DEFAULT_KIMI_API_BASE;
   const [progressMessage, setProgressMessage] = useState("正在连接 Kimi K3 并准备联网检索…");
   const [savingKey, setSavingKey] = useState(false);
 
@@ -69,8 +61,7 @@ export default function Home() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const configuredBase = window.XUNCHA_RADAR_CONFIG?.directKimiApiBase?.replace(/\/$/, "") || DEFAULT_KIMI_API_BASE;
-      const storedKey = window.localStorage.getItem(API_KEY_STORAGE) || "";
+      const storedKey = window.sessionStorage.getItem(API_KEY_STORAGE) || "";
       setApiKeyDraft(storedKey);
       if (!storedKey) {
         setServiceState("needs_key");
@@ -79,7 +70,7 @@ export default function Home() {
       }
       setApiKey(storedKey);
       setServiceState("checking");
-      testKimiKey(storedKey, configuredBase)
+      testKimiKey(storedKey)
         .then(() => setServiceState("ready"))
         .catch((keyError) => {
           setServiceState("unreachable");
@@ -99,11 +90,11 @@ export default function Home() {
     setApiKeyMessage("正在验证 Kimi K3 权限…");
     setServiceState("checking");
     try {
-      await testKimiKey(nextKey, apiBase);
-      window.localStorage.setItem(API_KEY_STORAGE, nextKey);
+      await testKimiKey(nextKey);
+      window.sessionStorage.setItem(API_KEY_STORAGE, nextKey);
       setApiKey(nextKey);
       setServiceState("ready");
-      setApiKeyMessage("Kimi K3 已验证，密钥只保存在这台电脑。 ");
+      setApiKeyMessage("Kimi K3 已验证，密钥只保存在当前浏览器会话。 ");
       setApiKeyPanelOpen(false);
     } catch (keyError) {
       setServiceState("unreachable");
@@ -114,7 +105,7 @@ export default function Home() {
   }
 
   function clearApiKey() {
-    window.localStorage.removeItem(API_KEY_STORAGE);
+    window.sessionStorage.removeItem(API_KEY_STORAGE);
     setApiKey("");
     setApiKeyDraft("");
     setServiceState("needs_key");
@@ -140,7 +131,7 @@ export default function Home() {
       return;
     }
     if (provider !== "kimi") {
-      setError("当前直连版只启用了 Kimi K3；DeepSeek 与豆包将在后续接入。 ");
+      setError("第一版服务端 Agent 只启用了 Kimi K3；DeepSeek 与豆包将在后续接入。 ");
       return;
     }
     if (!apiKey || serviceState !== "ready") {
@@ -157,7 +148,6 @@ export default function Home() {
       setProgressMessage("Kimi K3 正在拆解任务并开始联网检索…");
       const completed = await runKimiDirect({
         apiKey,
-        apiBase,
         provider,
         prompt: prompt.trim(),
         timeRange,
@@ -173,7 +163,7 @@ export default function Home() {
       if (runError instanceof DOMException && runError.name === "AbortError") {
         setError("调查超过6分钟仍未完成，已自动停止。请缩小时间或平台范围后重试。");
       } else if (runError instanceof TypeError) {
-        setError("浏览器无法直连 Kimi 官方 API。请先点击“设置 Kimi Key”重新验证；若验证也失败，说明公司网络拦截了 api.moonshot.cn。 ");
+        setError("无法连接巡查雷达服务端，请刷新页面后重试。 ");
       } else {
         setError(runError instanceof Error ? runError.message : "调查请求失败，请稍后重试。");
       }
@@ -217,11 +207,11 @@ export default function Home() {
           <div className="runtime-actions">
             <div className={`runtime-badge ${serviceState === "ready" ? "live" : "demo"}`}>
               <i /> {serviceState === "ready"
-                ? "实时模式 · Kimi K3 官方直连已验证"
+                ? "实时模式 · 服务端 Kimi K3 已验证"
                 : serviceState === "needs_key"
                   ? "实时模式 · 待设置本机 Kimi Key"
                   : serviceState === "unreachable"
-                    ? "实时模式 · Kimi 直连验证失败"
+                    ? "实时模式 · 服务端验证失败"
                     : "实时模式 · 正在验证 Kimi K3"}
             </div>
             <button className="key-settings-button" type="button" onClick={() => setApiKeyPanelOpen((current) => !current)}>
@@ -233,8 +223,8 @@ export default function Home() {
         {apiKeyPanelOpen && (
           <section className="api-key-panel" aria-label="Kimi API Key 设置">
             <div className="api-key-copy">
-              <b>Kimi K3 本机直连</b>
-              <p>密钥只保存在这台电脑的浏览器中，不会写入 GitHub，也不再经过 workers.dev 或 chatgpt.site。</p>
+              <b>Kimi K3 服务端 Agent</b>
+              <p>密钥只保存在当前浏览器会话，随单次任务经 HTTPS 发送到 Render 后端，不写入 GitHub、任务记录或服务端存储。</p>
             </div>
             <label>
               <span>Kimi API Key</span>
@@ -277,7 +267,7 @@ export default function Home() {
                   onClick={() => setProvider(item.id)}
                   type="button"
                   disabled={item.id !== "kimi"}
-                  title={item.id === "kimi" ? "Kimi K3 官方直连" : "待后续接入"}
+                  title={item.id === "kimi" ? "Kimi K3 服务端研究 Agent" : "待后续接入"}
                 >
                   <span className="model-mark">{item.mark}</span>
                   <span><b>{item.name}</b><small>{item.detail}</small></span>
@@ -491,7 +481,7 @@ export default function Home() {
 
       <footer className="statusbar">
         <span><i className="green" /> 任务编译器 ONLINE</span>
-        <span><i className={serviceState === "ready" ? "green" : "amber"} /> KIMI K3 DIRECT {serviceState === "ready" ? "READY" : "SETUP"}</span>
+        <span><i className={serviceState === "ready" ? "green" : "amber"} /> KIMI K3 SERVER AGENT {serviceState === "ready" ? "READY" : "SETUP"}</span>
         <span><i className="slate" /> 平台原生采集 ROADMAP</span>
         <b>所有“未发现”结论均需先排除采集失败</b>
       </footer>

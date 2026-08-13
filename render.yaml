@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: xuncha-radar
+    runtime: docker
+    plan: free
+    autoDeployTrigger: commit
+    healthCheckPath: /healthz

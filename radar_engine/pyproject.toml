@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xuncha-radar-engine"
+version = "0.1.0"
+description = "巡查雷达：面向内容生态风险发现的可审计研究 Agent 引擎"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "巡查雷达" }]
+dependencies = []
+
+[project.scripts]
+xuncha-radar = "radar_engine.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
