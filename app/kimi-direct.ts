@@ -40,6 +40,7 @@ export async function runKimiDirect(options: {
   apiKey: string;
   apiBase?: string;
   provider: Provider;
+  researchMode: "daily" | "topic";
   prompt: string;
   timeRange: string;
   platforms: string[];
@@ -51,7 +52,7 @@ export async function runKimiDirect(options: {
   return await postJson<InvestigationResult>(
     "/api/research",
     options.apiKey,
-    { prompt: options.prompt, timeRange: options.timeRange, platforms: options.platforms },
+    { researchMode: options.researchMode, prompt: options.prompt, timeRange: options.timeRange, platforms: options.platforms },
     options.signal,
   );
 }
