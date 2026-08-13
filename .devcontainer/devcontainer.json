@@ -1,0 +1,21 @@
+{
+  "name": "巡查雷达第一版",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12"
+    }
+  },
+  "forwardPorts": [10000],
+  "portsAttributes": {
+    "10000": {
+      "label": "巡查雷达",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postCreateCommand": "npm ci && npm run build:render",
+  "postStartCommand": "bash scripts/start-codespace.sh"
+}
