@@ -1,0 +1,63 @@
+{
+  "submission": {
+    "task_summary": "fixture：发现一个可核验的直接载体",
+    "coverage": {
+      "covered_lanes": ["authority", "weak_signal", "source_tracing", "domestic_landing", "verification"],
+      "gaps": [],
+      "stop_reason": "证据链完整"
+    },
+    "themes": [
+      {
+        "title": "测试风险机制",
+        "summary": "仅用于引擎回归，不代表真实事件。",
+        "urgency": "today",
+        "proposition": {
+          "subject": "测试账号",
+          "action": "发布",
+          "content": "测试风险内容",
+          "target": "普通用户",
+          "propagation_mechanism": "短视频引流",
+          "possible_impact": "形成误导传播"
+        },
+        "evidence": [
+          {
+            "url": "https://example.com/risk-post",
+            "title": "测试风险内容原帖",
+            "platform": "测试平台",
+            "published_at": "2026-08-13T01:00:00Z",
+            "excerpt": "这是用于自动回归的测试风险内容原文",
+            "author": "fixture-account",
+            "role": "D",
+            "dimensions": {
+              "directness": 3,
+              "evidence_quality": 3,
+              "regulatory_match": 3,
+              "novelty": 3,
+              "domestic_connection": 3
+            },
+            "regulatory_basis": ["测试规则第 1 条"],
+            "anchors": ["fixture-account", "测试暗语"]
+          }
+        ],
+        "uncertainty": []
+      }
+    ]
+  },
+  "tool_health": {
+    "search_attempts": 6,
+    "search_successes": 6,
+    "searched_lanes": ["authority", "weak_signal", "source_tracing", "domestic_landing", "verification"],
+    "tool_failures": [],
+    "duplicate_calls_blocked": 0,
+    "exhausted_budget": false
+  },
+  "verifications": {
+    "https://example.com/risk-post": {
+      "access": "verified",
+      "http_status": 200,
+      "title_match": true,
+      "date_match": true,
+      "content_match": true
+    }
+  }
+}

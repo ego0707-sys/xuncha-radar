@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+dist
+.next
+.vinext
+.wrangler
+cloudflare-worker
+*.zip
+*.sqlite3
+__pycache__
+*.pyc
