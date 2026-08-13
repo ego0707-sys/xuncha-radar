@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 
 from radar_engine.agent import KimiFormulaAgent
 from radar_engine.engine import RadarEngine
+from radar_engine.memory import SQLiteMemoryStore
 from radar_engine.models import ResearchTask, RunState, to_jsonable
 from radar_engine.verifier import HttpEvidenceVerifier
 
@@ -26,7 +27,7 @@ MOONSHOT_BASE = "https://api.moonshot.cn/v1"
 MAX_BODY_BYTES = 64 * 1024
 RESEARCH_SLOTS = threading.BoundedSemaphore(value=2)
 
-TIME_WINDOWS = {"近24小时": 24, "近48小时": 48, "近7天": 168, "近30天": 720, "不限时间": 2160}
+TIME_WINDOWS = {"近24小时": 24, "近48小时": 48, "近72小时": 72, "近7天": 168, "近30天": 720, "近90天": 2160, "不限时间": 2160}
 LANE_NAMES = {
     "authority": "权威规则",
     "weak_signal": "弱信号发现",
@@ -114,7 +115,7 @@ def evidence_level(grade: str, access: str) -> str:
     return "待核"
 
 
-def build_client_result(result: Any, events: list[dict[str, Any]], *, prompt: str, time_range: str, platforms: list[str]) -> dict[str, Any]:
+def build_client_result(result: Any, events: list[dict[str, Any]], *, research_mode: str, prompt: str, time_range: str, platforms: list[str]) -> dict[str, Any]:
     raw = to_jsonable(result)
     clues: list[dict[str, Any]] = []
     for theme in raw.get("themes") or []:
@@ -172,7 +173,7 @@ def build_client_result(result: Any, events: list[dict[str, Any]], *, prompt: st
         "generatedAt": raw.get("finished_at") or utc_now(),
         "task": {
             "objective": prompt,
-            "mode": "服务端多轮风险研究 Agent",
+            "mode": "日常自主巡查" if research_mode == "daily" else "专题线索追踪",
             "timeRange": time_range,
             "platforms": platforms,
             "riskHypotheses": [str(item.get("title")) for item in raw.get("themes") or [] if item.get("title")][:8] or ["本轮尚未形成可验证的风险主题"],
@@ -294,6 +295,9 @@ class RadarHandler(BaseHTTPRequestHandler):
             self.send_json({"error": f"研究服务执行失败：{type(exc).__name__}: {exc}"}, HTTPStatus.BAD_GATEWAY)
 
     def run_research(self, payload: dict[str, Any], api_key: str) -> None:
+        research_mode = str(payload.get("researchMode") or "topic").strip()
+        if research_mode not in {"daily", "topic"}:
+            raise ValueError("研究模式必须是 daily 或 topic。")
         prompt = str(payload.get("prompt") or "").strip()
         time_range = str(payload.get("timeRange") or "近48小时")
         raw_platforms = payload.get("platforms") or []
@@ -302,24 +306,43 @@ class RadarHandler(BaseHTTPRequestHandler):
             raise ValueError("巡查任务需为 4–5000 个字符。")
         if not platforms:
             raise ValueError("请至少选择一个平台范围。")
-        expanded_prompt = f"{prompt}\n时间范围：{time_range}；平台范围：{'、'.join(platforms)}。重点发现新的风险机制并尽量定位帖子、视频或笔记原页；排除新闻报道、批判揭露、辟谣和纯关键词重合。"
-        task = ResearchTask(prompt=expanded_prompt, mode="topic", window_hours=TIME_WINDOWS.get(time_range, 48), max_searches=10, max_rounds=8, max_results=10)
+        if research_mode == "daily":
+            mode_instruction = (
+                "这是日常自主巡查，不是围绕单个关键词做普通搜索。请从近期权威治理重点、境内外弱信号、"
+                "新实体与新话术、突发舆情评论生态四类入口主动提出候选命题，再沿实体与传播机制追踪境内落地。"
+            )
+            engine_mode = "daily_discovery"
+        else:
+            mode_instruction = (
+                "这是专题线索追踪。请围绕用户给出的已知事件、实体、组织、话术或风险机制持续扩展，"
+                "补齐源头、传播链、境内落地与权威规则依据，不要偏离专题目标。"
+            )
+            engine_mode = "topic_tracking"
+        expanded_prompt = (
+            f"{mode_instruction}\n本轮目标：{prompt}\n时间范围：{time_range}；平台范围：{'、'.join(platforms)}。"
+            "重点发现新的风险机制并尽量定位帖子、视频或笔记原页；排除新闻报道、批判揭露、辟谣和纯关键词重合。"
+        )
+        task = ResearchTask(prompt=expanded_prompt, mode=engine_mode, window_hours=TIME_WINDOWS.get(time_range, 72), max_searches=10, max_rounds=8, max_results=10)
+        memory = SQLiteMemoryStore(ROOT / "artifacts" / "radar_memory.sqlite3")
         engine = RadarEngine(
             agent=KimiFormulaAgent(api_key=api_key, model=MODEL, timeout_seconds=120),
             verifier=HttpEvidenceVerifier(timeout_seconds=10),
-            memory=None,
+            memory=memory,
         )
         trace_file = tempfile.NamedTemporaryFile(prefix="radar-trace-", suffix=".jsonl", delete=False)
         trace_file.close()
         try:
-            result = engine.run(task, trace_path=trace_file.name)
-            events = read_trace(trace_file.name)
+            try:
+                result = engine.run(task, trace_path=trace_file.name)
+                events = read_trace(trace_file.name)
+            finally:
+                memory.close()
         finally:
             try:
                 os.unlink(trace_file.name)
             except OSError:
                 pass
-        client = build_client_result(result, events, prompt=prompt, time_range=time_range, platforms=platforms)
+        client = build_client_result(result, events, research_mode=research_mode, prompt=prompt, time_range=time_range, platforms=platforms)
         if result.state is RunState.FAILED:
             self.send_json({"error": "；".join(result.state_reasons) or "研究 Agent 执行失败", "result": client}, HTTPStatus.BAD_GATEWAY)
         else:

@@ -31,7 +31,9 @@ test("renders development preview metadata", async () => {
   );
   const html = await response.text();
   assert.match(html, developmentPreviewMeta);
-  assert.match(html, /config\.js\?v=kimi-direct-1/);
-  assert.match(html, /设置 Kimi Key/);
+  assert.match(html, /先发现风险，再寻找样本/);
+  assert.match(html, /日常自主巡查/);
+  assert.match(html, /专题线索追踪/);
+  assert.match(html, /设置密钥/);
   assert.doesNotMatch(html, /handdoranibcu\.chatgpt\.site|ergoo0707\.workers\.dev/);
 });
